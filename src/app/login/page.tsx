@@ -4,9 +4,20 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSupabaseAnonClient } from "@/lib/supabase/client";
 
+const ID_LOGIN_EMAIL_DOMAIN = "kaikai.local";
+
+function toAuthEmail(loginId: string): string {
+  const normalized = loginId.trim().toLowerCase();
+  if (normalized.includes("@")) {
+    return normalized;
+  }
+
+  return `${normalized}@${ID_LOGIN_EMAIL_DOMAIN}`;
+}
+
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -18,6 +29,7 @@ export default function LoginPage() {
 
     try {
       const supabase = createSupabaseAnonClient();
+      const email = toAuthEmail(loginId);
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -44,12 +56,13 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="grid">
           <div>
-            <label htmlFor="email">ログインID（メール）</label>
+            <label htmlFor="loginId">ログインID</label>
             <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="loginId"
+              type="text"
+              value={loginId}
+              onChange={(e) => setLoginId(e.target.value)}
+              placeholder="例: Admin_122345"
               required
             />
           </div>
