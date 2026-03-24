@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseAnonClient } from "@/lib/supabase/client";
 
@@ -64,6 +65,11 @@ export default function AdminPage() {
         <p style={{ marginBottom: 0, color: "#6b7280" }}>
           AQUA返品票の登録状況、通知対象、回収状況を確認します。
         </p>
+        <div style={{ marginTop: 16 }}>
+          <Link href="/admin/ocr-review" className="btn" style={{ textDecoration: "none" }}>
+            OCR取込・確認画面へ
+          </Link>
+        </div>
       </section>
 
       <section className="grid grid-3">
