@@ -1,4 +1,62 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createSupabaseAnonClient } from "@/lib/supabase/client";
+
 export default function AdminPage() {
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
+
+  useEffect(() => {
+    const verifyAccess = async () => {
+      try {
+        const supabase = createSupabaseAnonClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+
+        if (!user) {
+          router.replace("/login");
+          return;
+        }
+
+        const { data: profile, error } = await supabase
+          .from("user_profiles")
+          .select("role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (error || profile?.role !== "admin") {
+          await supabase.auth.signOut();
+          router.replace("/login");
+          return;
+        }
+
+        setAuthorized(true);
+      } finally {
+        setChecking(false);
+      }
+    };
+
+    void verifyAccess();
+  }, [router]);
+
+  if (checking) {
+    return (
+      <main>
+        <div className="card" style={{ maxWidth: 420, margin: "40px auto" }}>
+          <p style={{ margin: 0 }}>認証確認中...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!authorized) {
+    return null;
+  }
+
   return (
     <main className="grid">
       <section className="card">

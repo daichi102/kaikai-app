@@ -1,0 +1,258 @@
+Vercel + Supabase 設定仕様書（家電回収・返却管理システム）
+版: 1.0
+
+この手順書は、appliance-kanri-app を Vercel と Supabase で本番運用するための設定を、順番どおりに分かりやすくまとめたものです。
+
+====================
+0. 事前準備
+====================
+0-1. 用意するもの
+- GitHubアカウント
+- Vercelアカウント
+- Supabaseアカウント
+- LINE Messaging API チャネル（利用する場合）
+
+0-2. 対象プロジェクト
+- アプリ: c:\ithe_app\kaikai_app\appliance-kanri-app
+- Supabaseスキーマ: supabase/schema.sql
+- 環境変数テンプレート: .env.example
+
+====================
+1. Supabase設定
+====================
+1-1. プロジェクト作成
+1) Supabaseで新規Projectを作成
+2) リージョンは日本または近接リージョンを選択
+3) DBパスワードを安全に保存
+
+1-2. 初期スキーマ適用
+1) SupabaseのSQL Editorを開く
+2) appliance-kanri-app/supabase/schema.sql の内容を貼り付け
+3) 実行してテーブル作成を確認
+
+作成される主テーブル:
+- user_profiles
+- appliance_slips
+- appliance_status_histories
+- notification_logs
+- line_send_logs
+
+1-3. 認証設定
+1) Authentication > Providers で Email を有効化
+2) メール確認フローは運用方針に合わせて設定
+3) 管理者1名、現場2名のユーザーを作成
+4) user_profiles に role=admin/field を登録
+
+1-4. ストレージ設定（画像保管）
+1) Storageでバケットを作成（例: appliance-slips）
+2) 保持ポリシーを5年運用前提で設計
+3) 不要な公開アクセスを無効化
+
+1-5. APIキー取得
+Project Settings > API から以下を取得:
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- SUPABASE_SERVICE_ROLE_KEY
+
+====================
+2. ローカル開発設定
+====================
+2-1. 環境変数
+1) appliance-kanri-app 直下で .env.local を作成
+2) 以下を設定
+- NEXT_PUBLIC_APP_URL=http://localhost:3000
+- NEXT_PUBLIC_SUPABASE_URL=...
+- NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+- SUPABASE_SERVICE_ROLE_KEY=...
+- LINE_CHANNEL_ACCESS_TOKEN=...（必要時）
+- LINE_CHANNEL_SECRET=...（必要時）
+- LINE_FIXED_GROUP_ID=...（必要時）
+
+2-2. 起動確認
+1) npm install
+2) npm run dev
+3) http://localhost:3000 にアクセス
+4) /login 画面表示とログイン動作を確認
+
+====================
+3. Vercelデプロイ設定
+====================
+3-1. Git連携
+1) appliance-kanri-app をGitHubリポジトリへpush
+2) Vercelで Import Project を実行
+3) Framework Preset は Next.js を選択
+
+3-2. Build設定
+- Build Command: npm run build
+- Output Directory: (空欄 / Next.js標準)
+- Install Command: npm install
+
+3-3. 環境変数設定（重要）
+Vercel Project Settings > Environment Variables で設定:
+- NEXT_PUBLIC_APP_URL=https://(本番ドメイン)
+- NEXT_PUBLIC_SUPABASE_URL
+- NEXT_PUBLIC_SUPABASE_ANON_KEY
+- SUPABASE_SERVICE_ROLE_KEY
+- LINE_CHANNEL_ACCESS_TOKEN（必要時）
+- LINE_CHANNEL_SECRET（必要時）
+- LINE_FIXED_GROUP_ID（必要時）
+
+注意:
+- SUPABASE_SERVICE_ROLE_KEY は機密情報。クライアント側に露出しないよう、サーバー処理のみで利用する。
+
+3-4. 初回デプロイ
+1) Deployを実行
+2) デプロイ完了後、/api/health にアクセス
+3) {"ok":true} が返ることを確認
+
+====================
+4. 運用開始前チェック
+====================
+4-1. 機能確認（最低限）
+- ログインできる
+- ダッシュボードが開く
+- Supabaseに接続できる
+- スキーマが反映済み
+
+4-2. 要件整合確認
+- 通知条件: 洗濯機27 / 冷蔵庫19 / 電子レンジ通知なし
+- ステータス遷移: 保管中→回収済→返却済
+- 監査ログ・データ保持5年
+
+4-3. セキュリティ確認
+- RLS有効化済み
+- 管理者と現場ロールの分離
+- 機密キーの漏洩なし
+
+====================
+5. トラブルシュート
+====================
+- ログイン失敗:
+  Supabase Authユーザー有無、メール/パスワード、user_profilesロールを確認
+
+- Vercelデプロイ失敗:
+  環境変数未設定、Build Command不一致、依存関係不足を確認
+
+- DB接続失敗:
+  NEXT_PUBLIC_SUPABASE_URL / ANON_KEY / SERVICE_ROLE_KEY を再確認
+
+====================
+6. 変更管理ルール
+====================
+- スキーマ変更時は supabase/schema.sql を更新
+- 変更日・変更者・変更理由を docs に記録
+- 本番反映前にステージングで動作確認
+
+====================
+7. LINE設定詳細（実施手順）
+====================
+7-1. LINE Developers 事前準備
+1) LINE Developers コンソールにログイン
+2) Provider を新規作成（既存利用でも可）
+3) Messaging API チャネルを作成
+   - チャネル名: 家電回収返却通知（任意）
+   - 業種カテゴリは社内運用に合わせて選択
+4) チャネル基本情報を保存
+
+7-2. Messaging API 必須設定
+1) Messaging API 設定画面を開く
+2) 以下を確認
+   - Webhook送信: 有効
+   - 応答メッセージ: 必要に応じて無効（Webhook側で制御するため）
+   - あいさつメッセージ: 必要に応じて無効
+3) Channel access token（長期）を発行
+4) Channel secret を控える
+
+7-3. Vercel 環境変数への反映
+Vercel Project Settings > Environment Variables に以下を設定:
+- LINE_CHANNEL_ACCESS_TOKEN=（7-2で発行したトークン）
+- LINE_CHANNEL_SECRET=（7-2のsecret）
+- LINE_FIXED_GROUP_ID=（7-5で取得した固定グループID）
+
+注意:
+- 機密情報のため Preview / Production の対象環境を分けて設定する。
+- 値更新後は再デプロイを実行する。
+
+7-4. Webhook URL 設定
+1) 本番URLを確認（例: https://<your-domain>/api/line/webhook）
+2) LINE Developers の Webhook URL に設定
+3) 「検証」ボタンで 200 応答を確認
+4) Webhook送信を有効化
+
+検証時の確認ポイント:
+- 401/403 の場合: LINE_CHANNEL_SECRET 不一致の可能性
+- 404 の場合: ルート未実装またはパス誤り
+- 500 の場合: サーバー環境変数または内部例外を確認
+
+7-5. 固定グループID（LINE_FIXED_GROUP_ID）取得手順
+方法A（推奨）: Webhookイベントログから取得
+1) Bot を対象グループに招待
+2) グループで任意メッセージを1件送信
+3) Webhook受信データの source.groupId を確認
+4) 取得した groupId を LINE_FIXED_GROUP_ID に設定
+
+方法B: 既存運用で取得済みIDを利用
+1) 運用台帳の groupId を確認
+2) 誤記がないか末尾まで照合して設定
+
+7-6. 動作確認（本番前）
+1) /api/health が正常応答する
+2) Webhook検証が成功する
+3) テストメッセージを送信してWebhook受信ログを確認
+4) 回収通知送信のテストを1件実施
+5) 送信先が固定グループのみであることを確認
+
+7-7. 誤送信防止ルール
+- 送信前プレビューを必須にする
+- 本番トークンと検証トークンを混在させない
+- LINE_FIXED_GROUP_ID をコードに直書きしない（環境変数のみ）
+- 送信ログ（日時、操作者、結果）を必ず保存する
+
+7-8. 運用トラブルシュート（LINE）
+- 送信できない（401）:
+  アクセストークン期限切れ、トークン貼り間違いを確認
+
+- 送信できない（403）:
+  Bot が送信先グループに参加しているか確認
+
+- Webhookが来ない:
+  Webhook URL、Webhook送信有効化、Vercelデプロイ状態を確認
+
+- 想定外のグループへ送られる:
+  LINE_FIXED_GROUP_ID の値と参照箇所を再確認
+
+====================
+8. 直近の反映内容（2026-03-24）
+====================
+8-1. ログイン方式の変更
+- 変更前: メールアドレス + パスワード
+- 変更後: ログインID + パスワード
+- 実装: ログインIDを内部で疑似メールへ変換して Supabase Auth に渡す
+  - 例: Admin_12345 -> admin_12345@kaikai.local
+
+8-2. 管理者IDの変更
+- 変更前: Admin_122345
+- 変更後: Admin_12345
+- 関連するAuthメール:
+  - 変更前: admin_122345@kaikai.local
+  - 変更後: admin_12345@kaikai.local
+
+8-3. /admin の権限制御追加
+- user_profiles.role を参照し、admin のみ /admin へアクセス可
+- role が field の場合はサインアウトして /login へ戻す
+- 未ログイン時も /login へリダイレクト
+
+8-4. 現在の運用アカウント（IDログイン）
+- 管理者:
+  - ID: Admin_12345
+  - role: admin
+- 現場:
+  - ID: User_10101
+  - role: field
+  - ID: User_10102
+  - role: field
+
+8-5. 反映後チェック
+1) 管理者IDで /admin に入れる
+2) 現場IDで /admin に入れない（/login へ戻る）
+3) /api/health が正常応答する

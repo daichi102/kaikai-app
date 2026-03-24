@@ -62,7 +62,7 @@ export default function LoginPage() {
               type="text"
               value={loginId}
               onChange={(e) => setLoginId(e.target.value)}
-              placeholder="例: Admin_122345"
+              placeholder="例: Admin_12345"
               required
             />
           </div>
