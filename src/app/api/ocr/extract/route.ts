@@ -136,13 +136,20 @@ function toLines(text: string): string[] {
     .split(/\r?\n/)
     .map((line) => normalizeLine(line))
     .filter((line) => line.length > 0)
-    .filter((line) => !/^\d+$/.test(line));
+    .filter((line) => !/^\d+$/.test(line))
+    .filter((line) => !/^(?:19|20)\d{2}[./年]\d{1,2}[./月]/.test(line))
+    .filter((line) => !/午前|午後|AM|PM|\d{1,2}:\d{2}/.test(line));
 }
 
 function cleanValue(value: string): string {
   return normalizeText(
     value
       .replace(/^[\s:：|｜・-]+/, "")
+      .replace(/[（(]\s*空白の場合[^）)]*[）)]/g, "")
+      .replace(/空白の場合[^、。\n]*(?:記入|入力)?[ー一\-]*/g, "")
+      .replace(/[（(]\s*参伝No\.?\s*[）)]/g, "")
+      .replace(/[（(]\s*旧品番\s*[）)]/g, "")
+      .replace(/[（(]\s*梱包に貼付\s*[）)]/g, "")
       .replace(/[\s|｜]+$/g, ""),
   );
 }
@@ -173,7 +180,72 @@ function isLikelyLabel(text: string): boolean {
   return ALL_LABEL_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-function extractByLabel(lines: string[], patterns: readonly RegExp[]): string {
+function sliceFormLines(lines: string[]): string[] {
+  if (lines.length === 0) {
+    return lines;
+  }
+
+  const startIndex = lines.findIndex((line) => /返品票|STO\s*伝票|承認番号/.test(line));
+  const lastRelevant = lines
+    .map((line, index) => ({ line, index }))
+    .reverse()
+    .find(({ line }) => /返(?:品|却)先|調査レベル|点検レベル|症状/.test(line));
+  const endIndex = lastRelevant?.index ?? lines.length - 1;
+
+  if (startIndex === -1 || endIndex <= startIndex) {
+    return lines;
+  }
+
+  return lines.slice(startIndex, endIndex + 2);
+}
+
+function isLikelyNoise(text: string): boolean {
+  if (/\d{1,2}[/／]\d{1,2}\s+[^\d]/.test(text)) {
+    return true;
+  }
+  if (/^[④③②①⑤⑥⑦⑧⑨⑩]/.test(text)) {
+    return true;
+  }
+  if (/[都道府県市区町村](?:$|\s)/.test(text) && !/倉庫|センター|検品/.test(text)) {
+    return true;
+  }
+  return false;
+}
+
+type LabelField = keyof typeof LABELS;
+
+function isValidByField(field: LabelField, value: string): boolean {
+  if (!value || isLikelyLabel(value) || isLikelyNoise(value)) {
+    return false;
+  }
+
+  switch (field) {
+    case "sto_number":
+      return /^\d{8,12}$/.test(value.replace(/[-\s]/g, ""));
+    case "approval_number":
+      return /^[A-Z]\d{5,}[A-Z0-9]*$/i.test(value.replace(/[-\s]/g, ""));
+    case "work_order_number":
+      return /^\d{6,10}$/.test(value.replace(/[-\s]/g, ""));
+    case "model_number":
+      return /^[A-Z]{2,}[-A-Z0-9()\/（）]{3,}$/i.test(value.replace(/\s/g, ""));
+    case "serial_number":
+      return /^[A-Z0-9()（）\/-]{5,}$/i.test(value.replace(/\s/g, ""));
+    case "request_type":
+      return /商品|交換|同機種|異機種|修理|返品|回収/.test(value) && !/\d{1,2}\/\d{1,2}/.test(value);
+    case "symptom":
+    case "inspection_level":
+    case "return_destination":
+    case "product_name":
+    case "request_department":
+    case "customer_name":
+    case "vendor_name":
+      return !isLikelyNoise(value);
+    default:
+      return true;
+  }
+}
+
+function extractByLabel(lines: string[], field: LabelField, patterns: readonly RegExp[]): string {
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     if (!patterns.some((pattern) => pattern.test(line))) {
@@ -186,13 +258,13 @@ function extractByLabel(lines: string[], patterns: readonly RegExp[]): string {
     const inline = cleanValue(inlineRaw);
 
     const inlineHasNumber = /[0-9A-Za-z]/.test(inline);
-    if (inline && inlineHasNumber && !isLikelyLabel(inline) && isValueLike(inline)) {
+    if (inline && inlineHasNumber && !isLikelyLabel(inline) && isValueLike(inline) && isValidByField(field, inline)) {
       return inline;
     }
 
     for (let j = i + 1; j < Math.min(i + 4, lines.length); j += 1) {
       const candidate = cleanValue(lines[j]);
-      if (!candidate || isLikelyLabel(candidate)) {
+      if (!candidate || isLikelyLabel(candidate) || !isValidByField(field, candidate)) {
         continue;
       }
       return candidate;
@@ -261,7 +333,7 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
   const normalizedText = normalizeText(text);
 
   const stoNumber =
-    extractByLabel(lines, LABELS.sto_number) ||
+    extractByLabel(lines, "sto_number", LABELS.sto_number) ||
     pickEntityValue(entities, ["sto", "sto_number"]) ||
     pickRegexValue(normalizedText, [
       /STO[^A-Z0-9]*([A-Z0-9-]{6,})/i,
@@ -276,7 +348,7 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
         ]);
 
   const approvalNumber =
-    extractByLabel(lines, LABELS.approval_number) ||
+    extractByLabel(lines, "approval_number", LABELS.approval_number) ||
     pickEntityValue(entities, ["approval", "approval_number"]) ||
     pickRegexValue(normalizedText, [/承認番号[^A-Z0-9]*([A-Z0-9-]{6,})/i]);
   const normalizedApproval =
@@ -285,7 +357,7 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
       : pickRegexValue(normalizedText, [/承認番号[^A-Z0-9]*([A-Z0-9-]{6,})/i, /\b([A-Z0-9]{6,})\b/]);
 
   const workOrderNumber =
-    extractByLabel(lines, LABELS.work_order_number) ||
+    extractByLabel(lines, "work_order_number", LABELS.work_order_number) ||
     pickRegexValue(normalizedText, [
       /作業指示番号[^A-Z0-9]*([A-Z0-9-]{6,})/i,
       /\b(\d{8,10})\b/,
@@ -299,44 +371,44 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
         ]);
 
   const vendorName =
-    extractByLabel(lines, LABELS.vendor_name) ||
+    extractByLabel(lines, "vendor_name", LABELS.vendor_name) ||
     pickEntityValue(entities, ["vendor", "dealer", "shop"]);
 
   const modelNumber =
-    extractByLabel(lines, LABELS.model_number) ||
+    extractByLabel(lines, "model_number", LABELS.model_number) ||
     pickEntityValue(entities, ["model", "model_number"]) ||
     pickRegexValue(normalizedText, [/(AQW[-A-Z0-9()/]+)/i]);
 
   const serialNumber =
-    extractByLabel(lines, LABELS.serial_number) ||
+    extractByLabel(lines, "serial_number", LABELS.serial_number) ||
     pickEntityValue(entities, ["serial", "serial_number"]) ||
     pickRegexValue(normalizedText, [/製造番号[^A-Z0-9]*([A-Z0-9()/-]{5,})/i]);
 
   const requestType =
-    extractByLabel(lines, LABELS.request_type) ||
+    extractByLabel(lines, "request_type", LABELS.request_type) ||
     pickEntityValue(entities, ["request_type", "request"]) ||
     pickRegexValue(normalizedText, [/申請区分[^\n]*?([\p{L}\p{N}()（）\-・ ]{3,})/u]);
 
   const symptom =
-    extractByLabel(lines, LABELS.symptom) ||
+    extractByLabel(lines, "symptom", LABELS.symptom) ||
     pickEntityValue(entities, ["symptom"]);
 
   const inspectionLevel =
-    extractByLabel(lines, LABELS.inspection_level) ||
+    extractByLabel(lines, "inspection_level", LABELS.inspection_level) ||
     pickEntityValue(entities, ["inspection", "level"]);
 
   const returnDestination =
-    extractByLabel(lines, LABELS.return_destination) ||
+    extractByLabel(lines, "return_destination", LABELS.return_destination) ||
     pickEntityValue(entities, ["return_destination"]);
 
-  const productName = extractByLabel(lines, LABELS.product_name) || pickEntityValue(entities, ["product"]);
+  const productName = extractByLabel(lines, "product_name", LABELS.product_name) || pickEntityValue(entities, ["product"]);
 
   const requestDepartment =
-    extractByLabel(lines, LABELS.request_department) ||
+    extractByLabel(lines, "request_department", LABELS.request_department) ||
     pickEntityValue(entities, ["department"]);
 
   const customerName =
-    extractByLabel(lines, LABELS.customer_name) ||
+    extractByLabel(lines, "customer_name", LABELS.customer_name) ||
     pickEntityValue(entities, ["customer", "client"]);
 
   return {
