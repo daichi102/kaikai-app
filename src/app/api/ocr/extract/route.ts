@@ -136,6 +136,66 @@ function normalizeText(value: string): string {
   return value.replace(/[\s　]+/g, " ").trim();
 }
 
+function normalizeLine(value: string): string {
+  return value.replace(/[ \t　]+/g, " ").trim();
+}
+
+function sanitizeExtractedValue(value: string): string {
+  return value.replace(/^["'`「『]+/, "").replace(/["'`」』]+$/, "").trim();
+}
+
+function toNormalizedLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => normalizeLine(line))
+    .filter((line) => line.length > 0)
+    .filter((line) => !/^\d+$/.test(line));
+}
+
+function looksLikeLabelLine(line: string, labels: string[]): boolean {
+  const normalized = normalizeLine(line).toLowerCase();
+  return labels.some((label) => normalized.includes(label.toLowerCase()));
+}
+
+function pickLineLabelValue(text: string, labels: string[]): string {
+  const lines = toNormalizedLines(text);
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const lowered = line.toLowerCase();
+
+    for (const label of labels) {
+      const loweredLabel = label.toLowerCase();
+      const index = lowered.indexOf(loweredLabel);
+
+      if (index < 0) {
+        continue;
+      }
+
+      const sameLineValue = sanitizeExtractedValue(
+        line.slice(index + label.length).replace(/^[\s　:：\-ー*]+/, ""),
+      );
+
+      if (sameLineValue && !looksLikeLabelLine(sameLineValue, labels)) {
+        return sameLineValue;
+      }
+
+      for (let next = i + 1; next < Math.min(i + 4, lines.length); next += 1) {
+        const candidate = sanitizeExtractedValue(lines[next]);
+        if (!candidate) {
+          continue;
+        }
+        if (looksLikeLabelLine(candidate, labels)) {
+          continue;
+        }
+        return candidate;
+      }
+    }
+  }
+
+  return "";
+}
+
 function chooseCategory(text: string): ApplianceCategory {
   const normalized = text.toLowerCase();
   if (normalized.includes("洗濯") || normalized.includes("washing")) {
@@ -159,14 +219,14 @@ function pickEntityValue(entities: DocumentEntity[], keys: string[]): string {
     return "";
   }
 
-  return normalizeText(matched.normalizedValue?.text ?? matched.mentionText ?? "");
+  return sanitizeExtractedValue(normalizeText(matched.normalizedValue?.text ?? matched.mentionText ?? ""));
 }
 
 function pickRegexValue(text: string, regexes: RegExp[]): string {
   for (const regex of regexes) {
     const match = text.match(regex);
     if (match?.[1]) {
-      return normalizeText(match[1]);
+      return sanitizeExtractedValue(normalizeText(match[1]));
     }
   }
   return "";
@@ -182,54 +242,87 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
 
   const stoNumber =
     pickEntityValue(entities, ["sto", "sto_number"]) ||
-    pickRegexValue(normalizedText, [/STO[\s:\-]*([A-Z0-9\-]+)/i, /STO番号[\s:\-]*([A-Z0-9\-]+)/i]);
+    pickLineLabelValue(text, ["STO番号", "STO", "sto number"]) ||
+    pickRegexValue(normalizedText, [
+      /STO(?:番号)?[\s:：\-]*([A-Z0-9\-]+)/i,
+      /sto\s*no\.?[\s:：\-]*([A-Z0-9\-]+)/i,
+    ]);
 
   const approvalNumber =
     pickEntityValue(entities, ["approval", "approval_number", "承認"]) ||
-    pickRegexValue(normalizedText, [/承認番号[\s:\-]*([A-Z0-9\-]+)/i, /approval[\s:\-]*([A-Z0-9\-]+)/i]);
+    pickLineLabelValue(text, ["承認番号", "承認No", "approval", "approval number"]) ||
+    pickRegexValue(normalizedText, [
+      /承認(?:番号|No)?[\s:：\-]*([A-Z0-9\-]+)/i,
+      /approval(?:\s*number)?[\s:：\-]*([A-Z0-9\-]+)/i,
+    ]);
 
   const workOrderNumber =
     pickEntityValue(entities, ["work_order", "workorder", "作業", "依頼"]) ||
-    pickRegexValue(normalizedText, [/作業依頼(?:票)?番号[\s:\-]*([A-Z0-9\-]+)/i, /work\s*order[\s:\-]*([A-Z0-9\-]+)/i]);
+    pickLineLabelValue(text, ["作業依頼番号", "依頼番号", "作業番号", "work order"]) ||
+    pickRegexValue(normalizedText, [
+      /作業依頼(?:票)?番号[\s:：\-]*([A-Z0-9\-]+)/i,
+      /依頼(?:票)?番号[\s:：\-]*([A-Z0-9\-]+)/i,
+      /work\s*order[\s:：\-]*([A-Z0-9\-]+)/i,
+    ]);
 
   const modelNumber =
     pickEntityValue(entities, ["model", "型式", "型番"]) ||
-    pickRegexValue(normalizedText, [/型(?:式|番)[\s:\-]*([A-Z0-9\-]+)/i, /model[\s:\-]*([A-Z0-9\-]+)/i]);
+    pickLineLabelValue(text, ["型式", "型番", "形式", "model"]) ||
+    pickRegexValue(normalizedText, [
+      /型(?:式|番|式\/型番)[\s:：\-]*([A-Z0-9\-\/]+)/i,
+      /model[\s:：\-]*([A-Z0-9\-\/]+)/i,
+    ]);
 
   const serialNumber =
     pickEntityValue(entities, ["serial", "製造", "製番"]) ||
-    pickRegexValue(normalizedText, [/製造番号[\s:\-]*([A-Z0-9\-]+)/i, /serial[\s:\-]*([A-Z0-9\-]+)/i]);
+    pickLineLabelValue(text, ["製造番号", "製番", "serial", "S/N"]) ||
+    pickRegexValue(normalizedText, [
+      /製造番号[\s:：\-]*([A-Z0-9\-\/]+)/i,
+      /serial(?:\s*number)?[\s:：\-]*([A-Z0-9\-\/]+)/i,
+      /S\/N[\s:：\-]*([A-Z0-9\-\/]+)/i,
+    ]);
 
   const requestType =
     pickEntityValue(entities, ["request_type", "依頼区分", "request"]) ||
-    pickRegexValue(normalizedText, [/依頼区分[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
+    pickLineLabelValue(text, ["依頼区分", "処理区分", "request type"]) ||
+    pickRegexValue(normalizedText, [
+      /依頼区分[\s:：\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i,
+      /処理区分[\s:：\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i,
+    ]);
 
   const vendorName =
     pickEntityValue(entities, ["vendor", "販売", "業者", "取引先"]) ||
+    pickLineLabelValue(text, ["販売店", "販売会社", "取引先", "vendor"]) ||
     pickRegexValue(normalizedText, [/販売(?:店|会社)?[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const productName =
     pickEntityValue(entities, ["product", "製品", "品名"]) ||
+    pickLineLabelValue(text, ["品名", "製品名", "product"]) ||
     pickRegexValue(normalizedText, [/品名[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const customerName =
     pickEntityValue(entities, ["customer", "お客様", "顧客", "氏名"]) ||
+    pickLineLabelValue(text, ["お客様名", "顧客名", "氏名", "customer"]) ||
     pickRegexValue(normalizedText, [/(?:お客様名|顧客名|氏名)[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const requestDepartment =
     pickEntityValue(entities, ["department", "部署", "部門"]) ||
+    pickLineLabelValue(text, ["依頼部署", "部署", "部門", "department"]) ||
     pickRegexValue(normalizedText, [/(?:依頼部署|部署|部門)[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const symptom =
     pickEntityValue(entities, ["symptom", "症状", "不具合"]) ||
+    pickLineLabelValue(text, ["症状", "不具合", "現象", "symptom"]) ||
     pickRegexValue(normalizedText, [/(?:症状|不具合)[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const inspectionLevel =
     pickEntityValue(entities, ["inspection", "点検", "判定"]) ||
+    pickLineLabelValue(text, ["点検レベル", "点検区分", "判定", "inspection"]) ||
     pickRegexValue(normalizedText, [/(?:点検区分|点検レベル|判定)[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   const returnDestination =
     pickEntityValue(entities, ["return_destination", "返却", "送付先"]) ||
+    pickLineLabelValue(text, ["返却先", "送付先", "返却先名", "return destination"]) ||
     pickRegexValue(normalizedText, [/(?:返却先|送付先)[\s:\-]*(.+?)(?:\s[A-Z0-9\-]{2,}|$)/i]);
 
   return {
