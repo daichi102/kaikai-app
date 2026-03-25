@@ -4,19 +4,16 @@ import ExcelJS from "exceljs";
 
 /** Column definition: DB field → Japanese header */
 const COLUMNS: Array<{ header: string; key: string; width?: number }> = [
-  { header: "伝票種別", key: "slip_type" },
-  { header: "STO伝票", key: "sto_number" },
-  { header: "承認番号", key: "approval_number" },
   { header: "作業指示番号", key: "work_order_number" },
-  { header: "返品品番", key: "model_number" },
-  { header: "製造番号", key: "serial_number" },
-  { header: "申請区分", key: "request_type" },
+  { header: "製品名", key: "product_name" },
+  { header: "STO伝票", key: "sto_number" },
   { header: "依頼部署", key: "request_department" },
+  { header: "品番", key: "model_number" },
+  { header: "製造番号", key: "serial_number" },
+  { header: "承認番号", key: "approval_number" },
+  { header: "お客様名", key: "customer_name" },
+  { header: "申請区分", key: "request_type" },
   { header: "症状", key: "symptom" },
-  { header: "返却先", key: "return_destination" },
-  { header: "家電カテゴリ", key: "appliance_category" },
-  { header: "ステータス", key: "status" },
-  { header: "受領日", key: "received_at" },
 ];
 
 /** Map DB enum values to readable Japanese labels */
@@ -115,19 +112,16 @@ export async function GET() {
     // Add data rows
     for (const row of rows ?? []) {
       sheet.addRow({
-        slip_type: row.slip_type ?? "",
-        sto_number: row.sto_number ?? "",
-        approval_number: row.approval_number ?? "",
         work_order_number: row.work_order_number ?? "",
+        product_name: row.product_name ?? "",
+        sto_number: row.sto_number ?? "",
+        request_department: row.request_department ?? "",
         model_number: row.model_number ?? "",
         serial_number: row.serial_number ?? "",
+        approval_number: row.approval_number ?? "",
+        customer_name: row.customer_name ?? "",
         request_type: row.request_type ?? "",
-        request_department: row.request_department ?? "",
         symptom: row.symptom ?? "",
-        return_destination: row.return_destination ?? "",
-        appliance_category: categoryLabel(row.appliance_category),
-        status: statusLabel(row.status),
-        received_at: formatDate(row.received_at),
       });
     }
 
