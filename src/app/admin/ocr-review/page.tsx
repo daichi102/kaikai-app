@@ -180,8 +180,10 @@ export default function OcrReviewPage() {
         },
         body: JSON.stringify({
           ...draft,
+          vendor_name: null,
           product_name: null,
           customer_name: null,
+          inspection_level: null,
           image_path: imageFile?.name ?? null,
           registered_by: userId,
         }),
@@ -292,7 +294,7 @@ export default function OcrReviewPage() {
             />
           </div>
           <div>
-            <label htmlFor="request_type">依頼区分 *</label>
+            <label htmlFor="request_type">申請区分 *</label>
             <input
               id="request_type"
               value={draft.request_type}
@@ -302,14 +304,6 @@ export default function OcrReviewPage() {
         </div>
 
         <div className="grid grid-3">
-          <div>
-            <label htmlFor="vendor_name">販売店</label>
-            <input
-              id="vendor_name"
-              value={draft.vendor_name ?? ""}
-              onChange={(e) => handleFieldChange("vendor_name", e.target.value)}
-            />
-          </div>
           <div>
             <label htmlFor="appliance_category">家電カテゴリ</label>
             <select
@@ -371,17 +365,6 @@ export default function OcrReviewPage() {
               rows={3}
               value={draft.symptom ?? ""}
               onChange={(e) => handleFieldChange("symptom", e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-3">
-          <div>
-            <label htmlFor="inspection_level">点検レベル</label>
-            <input
-              id="inspection_level"
-              value={draft.inspection_level ?? ""}
-              onChange={(e) => handleFieldChange("inspection_level", e.target.value)}
             />
           </div>
         </div>
