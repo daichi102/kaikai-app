@@ -59,6 +59,7 @@ export default function OcrReviewPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const verifyAccess = async () => {
@@ -197,6 +198,7 @@ export default function OcrReviewPage() {
       }
 
       setSuccess(`下書きを保存しました（ID: ${result.id}）。`);
+      setSaved(true);
       setImageFile(null);
       setRawText("");
     } catch {
@@ -375,6 +377,21 @@ export default function OcrReviewPage() {
         <button className="btn" type="button" onClick={handleSave} disabled={saving || !hasRequiredFields}>
           {saving ? "保存中..." : "下書き保存"}
         </button>
+
+        {saved ? (
+          <button
+            className="btn"
+            type="button"
+            style={{ background: "#047857" }}
+            onClick={() => {
+              const a = document.createElement("a");
+              a.href = "/api/export/excel";
+              a.click();
+            }}
+          >
+            Excel出力
+          </button>
+        ) : null}
       </section>
 
       <section className="card">
