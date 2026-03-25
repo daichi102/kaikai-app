@@ -39,7 +39,34 @@ function toStringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function resolveProductName(
+  applianceCategory: string,
+  applianceCategoryOther: string | null | undefined,
+): string | null {
+  const category = applianceCategory as OcrApplianceCategoryOption;
+
+  if (category === "washing_machine_drum") {
+    return "ドラム洗濯機";
+  }
+
+  if (category === "washing_machine_vertical") {
+    return "洗濯機";
+  }
+
+  if (category === "refrigerator_400_or_less" || category === "refrigerator_over_400") {
+    return "冷蔵庫";
+  }
+
+  if (category === "microwave") {
+    return "電子レンジ";
+  }
+
+  return toNullable(applianceCategoryOther) ?? "その他";
+}
+
 function sanitizePayload(payload: Partial<DraftPayload>): DraftPayload {
+  const rawCategory = toStringValue(payload.appliance_category);
+
   return {
     sto_number: toStringValue(payload.sto_number),
     approval_number: toStringValue(payload.approval_number),
@@ -51,10 +78,10 @@ function sanitizePayload(payload: Partial<DraftPayload>): DraftPayload {
     symptom: toNullable(payload.symptom),
     inspection_level: toNullable(payload.inspection_level),
     return_destination: toNullable(payload.return_destination),
-    product_name: toNullable(payload.product_name),
+    product_name: resolveProductName(rawCategory, payload.appliance_category_other),
     request_department: toNullable(payload.request_department),
     customer_name: toNullable(payload.customer_name),
-    appliance_category: normalizeCategory(toStringValue(payload.appliance_category)),
+    appliance_category: normalizeCategory(rawCategory),
     appliance_category_other: toNullable(payload.appliance_category_other),
     image_path: toNullable(payload.image_path),
     registered_by: toNullable(payload.registered_by),
