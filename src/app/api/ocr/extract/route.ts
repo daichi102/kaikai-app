@@ -147,6 +147,10 @@ function cleanValue(value: string): string {
   );
 }
 
+function isValueLike(value: string): boolean {
+  return /[A-Za-z0-9（）()]/.test(value);
+}
+
 const LABELS = {
   sto_number: [/STO\s*伝票/i, /STO\s*(?:No|番号)/i],
   approval_number: [/承認番号/i],
@@ -176,13 +180,13 @@ function extractByLabel(lines: string[], patterns: readonly RegExp[]): string {
       continue;
     }
 
-    const inline = cleanValue(
-      line
-        .replace(patterns[0], "")
-        .replace(/^[^:：]*[:：]/, ""),
-    );
+    const inlineRaw = line
+      .replace(patterns[0], "")
+      .replace(/^[^:：]*[:：]/, "");
+    const inline = cleanValue(inlineRaw);
 
-    if (inline && !isLikelyLabel(inline)) {
+    const inlineHasNumber = /[0-9A-Za-z]/.test(inline);
+    if (inline && inlineHasNumber && !isLikelyLabel(inline) && isValueLike(inline)) {
       return inline;
     }
 
@@ -246,17 +250,40 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
   const stoNumber =
     extractByLabel(lines, LABELS.sto_number) ||
     pickEntityValue(entities, ["sto", "sto_number"]) ||
-    pickRegexValue(normalizedText, [/STO[^A-Z0-9]*([A-Z0-9-]{6,})/i]);
+    pickRegexValue(normalizedText, [
+      /STO[^A-Z0-9]*([A-Z0-9-]{6,})/i,
+      /\b(\d{8,12})\b/,
+    ]);
+  const normalizedSto =
+    /\d/.test(stoNumber)
+      ? stoNumber
+      : pickRegexValue(normalizedText, [
+          /STO[^A-Z0-9]*([A-Z0-9-]{6,})/i,
+          /\b(\d{8,12})\b/,
+        ]);
 
   const approvalNumber =
     extractByLabel(lines, LABELS.approval_number) ||
     pickEntityValue(entities, ["approval", "approval_number"]) ||
     pickRegexValue(normalizedText, [/承認番号[^A-Z0-9]*([A-Z0-9-]{6,})/i]);
+  const normalizedApproval =
+    /\d/.test(approvalNumber)
+      ? approvalNumber
+      : pickRegexValue(normalizedText, [/承認番号[^A-Z0-9]*([A-Z0-9-]{6,})/i, /\b([A-Z0-9]{6,})\b/]);
 
   const workOrderNumber =
     extractByLabel(lines, LABELS.work_order_number) ||
-    pickEntityValue(entities, ["work_order", "workorder"]) ||
-    pickRegexValue(normalizedText, [/作業指示番号[^A-Z0-9]*([A-Z0-9-]{6,})/i]);
+    pickRegexValue(normalizedText, [
+      /作業指示番号[^A-Z0-9]*([A-Z0-9-]{6,})/i,
+      /\b(\d{8,10})\b/,
+    ]);
+  const normalizedWorkOrder =
+    /\d/.test(workOrderNumber)
+      ? workOrderNumber
+      : pickRegexValue(normalizedText, [
+          /作業指示番号[^A-Z0-9]*([A-Z0-9-]{6,})/i,
+          /\b(\d{8,10})\b/,
+        ]);
 
   const vendorName =
     extractByLabel(lines, LABELS.vendor_name) ||
@@ -277,26 +304,32 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
     pickEntityValue(entities, ["request_type", "request"]) ||
     pickRegexValue(normalizedText, [/申請区分[^\n]*?([\p{L}\p{N}()（）\-・ ]{3,})/u]);
 
-  const symptom = extractByLabel(lines, LABELS.symptom) || pickEntityValue(entities, ["symptom"]);
+  const symptom =
+    extractByLabel(lines, LABELS.symptom) ||
+    pickEntityValue(entities, ["symptom"]);
 
   const inspectionLevel =
-    extractByLabel(lines, LABELS.inspection_level) || pickEntityValue(entities, ["inspection", "level"]);
+    extractByLabel(lines, LABELS.inspection_level) ||
+    pickEntityValue(entities, ["inspection", "level"]);
 
   const returnDestination =
-    extractByLabel(lines, LABELS.return_destination) || pickEntityValue(entities, ["return_destination"]);
+    extractByLabel(lines, LABELS.return_destination) ||
+    pickEntityValue(entities, ["return_destination"]);
 
   const productName = extractByLabel(lines, LABELS.product_name) || pickEntityValue(entities, ["product"]);
 
   const requestDepartment =
-    extractByLabel(lines, LABELS.request_department) || pickEntityValue(entities, ["department"]);
+    extractByLabel(lines, LABELS.request_department) ||
+    pickEntityValue(entities, ["department"]);
 
   const customerName =
-    extractByLabel(lines, LABELS.customer_name) || pickEntityValue(entities, ["customer", "client"]);
+    extractByLabel(lines, LABELS.customer_name) ||
+    pickEntityValue(entities, ["customer", "client"]);
 
   return {
-    sto_number: stoNumber,
-    approval_number: approvalNumber,
-    work_order_number: workOrderNumber,
+    sto_number: normalizedSto,
+    approval_number: normalizedApproval,
+    work_order_number: normalizedWorkOrder,
     vendor_name: pickNullable(vendorName),
     model_number: modelNumber,
     serial_number: serialNumber,
