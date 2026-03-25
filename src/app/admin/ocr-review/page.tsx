@@ -65,6 +65,7 @@ export default function OcrReviewPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraSupported, setCameraSupported] = useState(false);
+  const [cameraError, setCameraError] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -133,17 +134,34 @@ export default function OcrReviewPage() {
     try {
       setError("");
       setSuccess("");
+      setCameraError("");
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, aspectRatio: { ideal: 4 / 3 } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
+        },
+        audio: false,
       });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.playsInline = true;
+        await new Promise<void>((resolve) => {
+          const onReady = () => {
+            videoRef.current?.removeEventListener("loadedmetadata", onReady);
+            resolve();
+          };
+          videoRef.current?.addEventListener("loadedmetadata", onReady);
+        });
         await videoRef.current.play();
       }
       setCameraActive(true);
     } catch {
-      setError("カメラを起動できませんでした。権限を許可してください。");
+      setCameraError("カメラを起動できませんでした。権限を許可し、HTTPSで開いてください。");
+      setCameraActive(false);
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
   };
 
@@ -151,6 +169,7 @@ export default function OcrReviewPage() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     setCameraActive(false);
+    setCameraError("");
   };
 
   const captureFromCamera = async () => {
@@ -169,10 +188,12 @@ export default function OcrReviewPage() {
     }
 
     // 画面中央の4:3枠を切り出して周辺の写り込みを減らす
-    const targetW = vw * 0.9;
-    let targetH = targetW * 0.75;
+    const targetAspect = 4 / 3;
+    let targetW = vw * 0.9;
+    let targetH = targetW / targetAspect;
     if (targetH > vh * 0.9) {
       targetH = vh * 0.9;
+      targetW = targetH * targetAspect;
     }
     const sx = (vw - targetW) / 2;
     const sy = (vh - targetH) / 2;
@@ -351,6 +372,9 @@ export default function OcrReviewPage() {
                 枠に合わせて撮影すると精度が上がります
               </span>
             </div>
+            {cameraError ? (
+              <p style={{ color: "#b91c1c", margin: 0 }}>{cameraError}</p>
+            ) : null}
 
             {cameraActive ? (
               <div style={{ display: "grid", gap: 8 }}>
