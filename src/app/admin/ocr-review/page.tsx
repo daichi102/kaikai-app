@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createSupabaseAnonClient } from "@/lib/supabase/client";
@@ -59,6 +59,7 @@ export default function OcrReviewPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -151,6 +152,12 @@ export default function OcrReviewPage() {
     }
   };
 
+  const openCamera = () => {
+    setError("");
+    setSuccess("");
+    fileInputRef.current?.click();
+  };
+
   const handleFieldChange = (field: keyof OcrExtractedDraft, value: string) => {
     setDraft((prev) => ({
       ...prev,
@@ -238,9 +245,63 @@ export default function OcrReviewPage() {
 
       <section className="card">
         <form className="grid" onSubmit={handleExtract}>
-          <div>
+          <div style={{ display: "grid", gap: 8 }}>
             <label htmlFor="image">票画像</label>
-            <input id="image" type="file" accept="image/*" onChange={handleFileChange} required />
+            <input
+              id="image"
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleFileChange}
+              required
+              style={{ display: "none" }}
+            />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn secondary" type="button" onClick={() => fileInputRef.current?.click()}>
+                ファイルを選択
+              </button>
+              <button className="btn" type="button" onClick={openCamera}>
+                カメラで撮影
+              </button>
+              <span style={{ alignSelf: "center", color: "#6b7280", fontSize: 12 }}>
+                スマホ/タブレットで枠に収めて撮影すると精度が上がります
+              </span>
+            </div>
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                aspectRatio: "4 / 3",
+                border: "2px dashed #0f172a",
+                borderRadius: 8,
+                background:
+                  "linear-gradient(135deg, #f8fafc 25%, #ffffff 25%, #ffffff 50%, #f8fafc 50%, #f8fafc 75%, #ffffff 75%, #ffffff 100%)",
+                backgroundSize: "32px 32px",
+                display: "grid",
+                placeItems: "center",
+                color: "#0f172a",
+                fontWeight: 600,
+                textAlign: "center",
+                padding: 12,
+              }}
+            >
+              <div>
+                票全体がこの枠に収まるように合わせて撮影してください
+                <div style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginTop: 4 }}>
+                  影・反射を避け、水平に。4辺が見切れないようにしてください。
+                </div>
+              </div>
+              <div
+                style={{
+                  position: "absolute",
+                  inset: "8%",
+                  border: "3px solid rgba(15, 23, 42, 0.35)",
+                  borderRadius: 6,
+                  pointerEvents: "none",
+                }}
+              />
+            </div>
           </div>
           <button className="btn" type="submit" disabled={extracting || !imageFile}>
             {extracting ? "OCR抽出中..." : "OCR抽出"}
