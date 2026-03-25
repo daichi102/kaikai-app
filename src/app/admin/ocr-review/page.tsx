@@ -60,6 +60,11 @@ export default function OcrReviewPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraSupported, setCameraSupported] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -97,6 +102,15 @@ export default function OcrReviewPage() {
     void verifyAccess();
   }, [router]);
 
+  useEffect(() => {
+    setCameraSupported(typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia));
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
+
   const hasRequiredFields = useMemo(() => {
     return Boolean(
       draft.sto_number.trim() &&
@@ -113,6 +127,74 @@ export default function OcrReviewPage() {
     setImageFile(file);
     setError("");
     setSuccess("");
+  };
+
+  const startCamera = async () => {
+    try {
+      setError("");
+      setSuccess("");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, aspectRatio: { ideal: 4 / 3 } },
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setCameraActive(true);
+    } catch {
+      setError("カメラを起動できませんでした。権限を許可してください。");
+    }
+  };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraActive(false);
+  };
+
+  const captureFromCamera = async () => {
+    if (!videoRef.current || !canvasRef.current) {
+      setError("カメラが初期化されていません。");
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (!vw || !vh) {
+      setError("フレームを取得できませんでした。");
+      return;
+    }
+
+    // 画面中央の4:3枠を切り出して周辺の写り込みを減らす
+    const targetW = vw * 0.9;
+    let targetH = targetW * 0.75;
+    if (targetH > vh * 0.9) {
+      targetH = vh * 0.9;
+    }
+    const sx = (vw - targetW) / 2;
+    const sy = (vh - targetH) / 2;
+
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setError("キャンバス初期化に失敗しました。");
+      return;
+    }
+    ctx.drawImage(video, sx, sy, targetW, targetH, 0, 0, targetW, targetH);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) {
+      setError("画像の生成に失敗しました。");
+      return;
+    }
+    const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
+    setImageFile(file);
+    setError("");
+    setSuccess("フレームを取り込みました。OCR抽出を実行できます。");
   };
 
   const handleExtract = async (event: FormEvent<HTMLFormElement>) => {
@@ -150,12 +232,6 @@ export default function OcrReviewPage() {
     } finally {
       setExtracting(false);
     }
-  };
-
-  const openCamera = () => {
-    setError("");
-    setSuccess("");
-    fileInputRef.current?.click();
   };
 
   const handleFieldChange = (field: keyof OcrExtractedDraft, value: string) => {
@@ -261,47 +337,101 @@ export default function OcrReviewPage() {
               <button className="btn secondary" type="button" onClick={() => fileInputRef.current?.click()}>
                 ファイルを選択
               </button>
-              <button className="btn" type="button" onClick={openCamera}>
-                カメラで撮影
-              </button>
+              {cameraSupported ? (
+                <>
+                  <button className="btn" type="button" onClick={startCamera} disabled={cameraActive}>
+                    カメラを起動
+                  </button>
+                  <button className="btn secondary" type="button" onClick={stopCamera} disabled={!cameraActive}>
+                    カメラ停止
+                  </button>
+                </>
+              ) : null}
               <span style={{ alignSelf: "center", color: "#6b7280", fontSize: 12 }}>
-                スマホ/タブレットで枠に収めて撮影すると精度が上がります
+                枠に合わせて撮影すると精度が上がります
               </span>
             </div>
-            <div
-              style={{
-                position: "relative",
-                width: "100%",
-                aspectRatio: "4 / 3",
-                border: "2px dashed #0f172a",
-                borderRadius: 8,
-                background:
-                  "linear-gradient(135deg, #f8fafc 25%, #ffffff 25%, #ffffff 50%, #f8fafc 50%, #f8fafc 75%, #ffffff 75%, #ffffff 100%)",
-                backgroundSize: "32px 32px",
-                display: "grid",
-                placeItems: "center",
-                color: "#0f172a",
-                fontWeight: 600,
-                textAlign: "center",
-                padding: 12,
-              }}
-            >
-              <div>
-                票全体がこの枠に収まるように合わせて撮影してください
-                <div style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginTop: 4 }}>
-                  影・反射を避け、水平に。4辺が見切れないようにしてください。
+
+            {cameraActive ? (
+              <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ position: "relative", width: "100%", aspectRatio: "4 / 3" }}>
+                  <video
+                    ref={videoRef}
+                    playsInline
+                    muted
+                    style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8, background: "#000" }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      inset: "8%",
+                      border: "3px solid rgba(15, 23, 42, 0.6)",
+                      borderRadius: 10,
+                      pointerEvents: "none",
+                      boxShadow: "0 0 0 2000px rgba(0,0,0,0.25)",
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: 8,
+                      left: 12,
+                      right: 12,
+                      color: "#f8fafc",
+                      textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+                      fontWeight: 600,
+                      fontSize: 13,
+                    }}
+                  >
+                    枠に票を水平に収めてください（4:3）
+                  </div>
                 </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="btn" type="button" onClick={captureFromCamera}>
+                    この枠で取り込む
+                  </button>
+                  <button className="btn secondary" type="button" onClick={stopCamera}>
+                    キャンセル
+                  </button>
+                </div>
+                <canvas ref={canvasRef} style={{ display: "none" }} />
               </div>
+            ) : (
               <div
                 style={{
-                  position: "absolute",
-                  inset: "8%",
-                  border: "3px solid rgba(15, 23, 42, 0.35)",
-                  borderRadius: 6,
-                  pointerEvents: "none",
+                  position: "relative",
+                  width: "100%",
+                  aspectRatio: "4 / 3",
+                  border: "2px dashed #0f172a",
+                  borderRadius: 8,
+                  background:
+                    "linear-gradient(135deg, #f8fafc 25%, #ffffff 25%, #ffffff 50%, #f8fafc 50%, #f8fafc 75%, #ffffff 75%, #ffffff 100%)",
+                  backgroundSize: "32px 32px",
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#0f172a",
+                  fontWeight: 600,
+                  textAlign: "center",
+                  padding: 12,
                 }}
-              />
-            </div>
+              >
+                <div>
+                  票全体がこの枠に収まるように合わせて撮影してください
+                  <div style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginTop: 4 }}>
+                    影・反射を避け、水平に。4辺が見切れないようにしてください。
+                  </div>
+                </div>
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: "8%",
+                    border: "3px solid rgba(15, 23, 42, 0.35)",
+                    borderRadius: 6,
+                    pointerEvents: "none",
+                  }}
+                />
+              </div>
+            )}
           </div>
           <button className="btn" type="submit" disabled={extracting || !imageFile}>
             {extracting ? "OCR抽出中..." : "OCR抽出"}
