@@ -113,7 +113,7 @@ export async function GET() {
     for (const row of rows ?? []) {
       sheet.addRow({
         work_order_number: row.work_order_number ?? "",
-        product_name: row.product_name ?? "",
+        product_name: categoryLabel(row.appliance_category),
         sto_number: row.sto_number ?? "",
         request_department: row.request_department ?? "",
         model_number: row.model_number ?? "",
