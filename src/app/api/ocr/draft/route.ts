@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServiceClient } from "@/lib/supabase/client";
-import type { ApplianceCategory } from "@/types/appliance";
+import type { ApplianceCategory, OcrApplianceCategoryOption } from "@/types/appliance";
 import type { OcrExtractedDraft } from "@/types/ocr";
 
-type DraftPayload = OcrExtractedDraft & {
+type DraftPayload = Omit<OcrExtractedDraft, "appliance_category"> & {
+  appliance_category: string;
   image_path?: string | null;
   registered_by?: string | null;
 };
@@ -17,9 +18,20 @@ function toNullable(value: string | null | undefined): string | null {
 }
 
 function normalizeCategory(value: string): ApplianceCategory {
-  if (value === "washing_machine" || value === "refrigerator" || value === "microwave") {
-    return value;
+  const category = value as OcrApplianceCategoryOption;
+
+  if (category === "washing_machine_vertical" || category === "washing_machine_drum") {
+    return "washing_machine";
   }
+
+  if (category === "refrigerator_400_or_less" || category === "refrigerator_over_400") {
+    return "refrigerator";
+  }
+
+  if (category === "microwave") {
+    return "microwave";
+  }
+
   return "microwave";
 }
 
@@ -43,6 +55,7 @@ function sanitizePayload(payload: Partial<DraftPayload>): DraftPayload {
     request_department: toNullable(payload.request_department),
     customer_name: toNullable(payload.customer_name),
     appliance_category: normalizeCategory(toStringValue(payload.appliance_category)),
+    appliance_category_other: toNullable(payload.appliance_category_other),
     image_path: toNullable(payload.image_path),
     registered_by: toNullable(payload.registered_by),
   };

@@ -1,4 +1,4 @@
-import type { ApplianceCategory } from "@/types/appliance";
+import type { OcrApplianceCategoryOption } from "@/types/appliance";
 
 export interface OcrExtractedDraft {
   sto_number: string;
@@ -14,5 +14,6 @@ export interface OcrExtractedDraft {
   product_name: string | null;
   request_department: string | null;
   customer_name: string | null;
-  appliance_category: ApplianceCategory;
+  appliance_category: OcrApplianceCategoryOption;
+  appliance_category_other: string | null;
 }

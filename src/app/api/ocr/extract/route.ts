@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { createSign } from "node:crypto";
-import type { ApplianceCategory } from "@/types/appliance";
+import type { OcrApplianceCategoryOption } from "@/types/appliance";
 import type { OcrExtractedDraft } from "@/types/ocr";
 
 type DocumentEntity = {
@@ -231,16 +231,29 @@ function pickNullable(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
-function chooseCategory(text: string): ApplianceCategory {
+function chooseCategory(text: string): OcrApplianceCategoryOption {
   const normalized = text.toLowerCase();
 
+  if (normalized.includes("ドラム")) {
+    return "washing_machine_drum";
+  }
   if (normalized.includes("aqw") || normalized.includes("洗濯") || normalized.includes("washing")) {
-    return "washing_machine";
+    return "washing_machine_vertical";
   }
+
   if (normalized.includes("冷蔵") || normalized.includes("refrigerator")) {
-    return "refrigerator";
+    const liters = normalized.match(/(\d{3})\s*[lｌＬ]/);
+    if (liters?.[1]) {
+      return Number(liters[1]) > 400 ? "refrigerator_over_400" : "refrigerator_400_or_less";
+    }
+    return "refrigerator_400_or_less";
   }
-  return "microwave";
+
+  if (normalized.includes("レンジ") || normalized.includes("microwave")) {
+    return "microwave";
+  }
+
+  return "other";
 }
 
 function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft {
@@ -341,6 +354,7 @@ function mapToDraft(text: string, entities: DocumentEntity[]): OcrExtractedDraft
     request_department: pickNullable(requestDepartment),
     customer_name: pickNullable(customerName),
     appliance_category: chooseCategory(`${modelNumber} ${productName} ${requestType} ${normalizedText}`),
+    appliance_category_other: null,
   };
 }
 

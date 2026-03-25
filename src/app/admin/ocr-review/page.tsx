@@ -6,6 +6,15 @@ import { useRouter } from "next/navigation";
 import { createSupabaseAnonClient } from "@/lib/supabase/client";
 import type { OcrExtractedDraft } from "@/types/ocr";
 
+const CATEGORY_OPTIONS: Array<{ value: OcrExtractedDraft["appliance_category"]; label: string }> = [
+  { value: "washing_machine_vertical", label: "縦型洗濯機" },
+  { value: "washing_machine_drum", label: "ドラム洗濯機" },
+  { value: "refrigerator_400_or_less", label: "冷蔵庫400以下" },
+  { value: "refrigerator_over_400", label: "冷蔵庫400以上" },
+  { value: "microwave", label: "電子レンジ" },
+  { value: "other", label: "その他" },
+];
+
 const INITIAL_DRAFT: OcrExtractedDraft = {
   sto_number: "",
   approval_number: "",
@@ -21,6 +30,7 @@ const INITIAL_DRAFT: OcrExtractedDraft = {
   request_department: null,
   customer_name: null,
   appliance_category: "microwave",
+  appliance_category_other: null,
 };
 
 type ExtractApiResult = {
@@ -150,7 +160,8 @@ export default function OcrReviewPage() {
         field === "return_destination" ||
         field === "product_name" ||
         field === "request_department" ||
-        field === "customer_name"
+        field === "customer_name" ||
+        field === "appliance_category_other"
           ? toNullable(value)
           : value,
     }));
@@ -169,6 +180,8 @@ export default function OcrReviewPage() {
         },
         body: JSON.stringify({
           ...draft,
+          product_name: null,
+          customer_name: null,
           image_path: imageFile?.name ?? null,
           registered_by: userId,
         }),
@@ -298,25 +311,37 @@ export default function OcrReviewPage() {
             />
           </div>
           <div>
-            <label htmlFor="product_name">品名</label>
-            <input
-              id="product_name"
-              value={draft.product_name ?? ""}
-              onChange={(e) => handleFieldChange("product_name", e.target.value)}
-            />
-          </div>
-          <div>
             <label htmlFor="appliance_category">家電カテゴリ</label>
             <select
               id="appliance_category"
               value={draft.appliance_category}
-              onChange={(e) => handleFieldChange("appliance_category", e.target.value)}
+              onChange={(e) => {
+                const category = e.target.value as OcrExtractedDraft["appliance_category"];
+                setDraft((prev) => ({
+                  ...prev,
+                  appliance_category: category,
+                  appliance_category_other: category === "other" ? prev.appliance_category_other : null,
+                }));
+              }}
             >
-              <option value="washing_machine">washing_machine</option>
-              <option value="refrigerator">refrigerator</option>
-              <option value="microwave">microwave</option>
+              {CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
             </select>
           </div>
+          {draft.appliance_category === "other" ? (
+            <div>
+              <label htmlFor="appliance_category_other">その他カテゴリ</label>
+              <input
+                id="appliance_category_other"
+                value={draft.appliance_category_other ?? ""}
+                onChange={(e) => handleFieldChange("appliance_category_other", e.target.value)}
+                placeholder="カテゴリ名を入力"
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="grid grid-3">
@@ -326,14 +351,6 @@ export default function OcrReviewPage() {
               id="request_department"
               value={draft.request_department ?? ""}
               onChange={(e) => handleFieldChange("request_department", e.target.value)}
-            />
-          </div>
-          <div>
-            <label htmlFor="customer_name">顧客名</label>
-            <input
-              id="customer_name"
-              value={draft.customer_name ?? ""}
-              onChange={(e) => handleFieldChange("customer_name", e.target.value)}
             />
           </div>
           <div>

@@ -1,5 +1,13 @@
 export type ApplianceCategory = "washing_machine" | "refrigerator" | "microwave";
 
+export type OcrApplianceCategoryOption =
+  | "washing_machine_vertical"
+  | "washing_machine_drum"
+  | "refrigerator_400_or_less"
+  | "refrigerator_over_400"
+  | "microwave"
+  | "other";
+
 export type ApplianceStatus = "stored" | "collected" | "returned";
 
 export interface ApplianceSlip {
