@@ -144,7 +144,7 @@ function sanitizeExtractedValue(value: string): string {
   return value
     .replace(/^["'`「『]+/, "")
     .replace(/["'`」』]+$/, "")
-    .replace(/^(?:\([^)]*\)|（[^）]*）)+\s*/, "")
+    .replace(/^(?:\([^)]{2,}\)|（[^）]{2,}）)+\s*/, "")
     .trim();
 }
 
@@ -161,6 +161,23 @@ function looksLikeLabelLine(line: string, labels: string[]): boolean {
   return labels.some((label) => normalized.includes(label.toLowerCase()));
 }
 
+const ALL_KNOWN_LABELS: string[] = [
+  "返品票", "AQUA", "本体に貼付",
+  "STO伝票", "STO番号", "参伝No",
+  "承認番号", "承認No",
+  "作業指示番号", "作業依頼番号", "指示番号", "依頼番号", "作業番号",
+  "交換業者名", "販売店", "販売会社", "取引先",
+  "返品品番", "旧品番", "型式", "型番", "形式",
+  "製造番号", "製番", "製造No",
+  "申請区分", "依頼区分", "処理区分",
+  "症状", "不具合", "現象",
+  "調査レベル", "点検レベル", "点検区分", "判定",
+  "返品先", "返却先", "送付先",
+  "品名", "製品名",
+  "お客様名", "顧客名", "氏名",
+  "依頼部署", "部署", "部門",
+];
+
 function pickLineLabelValue(text: string, labels: string[]): string {
   const lines = toNormalizedLines(text);
 
@@ -176,20 +193,21 @@ function pickLineLabelValue(text: string, labels: string[]): string {
         continue;
       }
 
-      const sameLineValue = sanitizeExtractedValue(
-        line.slice(index + label.length).replace(/^[\s　:：\-ー*]+/, ""),
-      );
+      const afterLabel = line
+        .slice(index + label.length)
+        .replace(/^(?:[\s　:：\-ー*]|\([^)]{2,}\)|（[^）]{2,}）)*/,"")
+        .trim();
 
-      if (sameLineValue && !looksLikeLabelLine(sameLineValue, labels)) {
-        return sameLineValue;
+      if (afterLabel && !looksLikeLabelLine(afterLabel, ALL_KNOWN_LABELS)) {
+        return afterLabel;
       }
 
       for (let next = i + 1; next < Math.min(i + 4, lines.length); next += 1) {
-        const candidate = sanitizeExtractedValue(lines[next]);
+        const candidate = lines[next].trim();
         if (!candidate) {
           continue;
         }
-        if (looksLikeLabelLine(candidate, labels)) {
+        if (looksLikeLabelLine(candidate, ALL_KNOWN_LABELS)) {
           continue;
         }
         return candidate;
