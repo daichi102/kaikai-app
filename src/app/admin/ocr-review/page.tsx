@@ -40,9 +40,186 @@ type ExtractApiResult = {
   error?: string;
 };
 
+type ProcessedImageResult = {
+  file: File;
+  warnings: string[];
+};
+
 function toNullable(value: string): string | null {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("画像の読み込みに失敗しました。"));
+    };
+    image.src = objectUrl;
+  });
+}
+
+function getScaledSize(width: number, height: number): { width: number; height: number } {
+  const longEdge = Math.max(width, height);
+  const shortEdge = Math.min(width, height);
+  const minShortEdge = 1200;
+  const maxLongEdge = 2200;
+
+  let scale = 1;
+  if (longEdge > maxLongEdge) {
+    scale = maxLongEdge / longEdge;
+  }
+  if (shortEdge * scale < minShortEdge) {
+    scale = minShortEdge / shortEdge;
+  }
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function findContentBounds(imageData: ImageData): { x: number; y: number; width: number; height: number } {
+  const { data, width, height } = imageData;
+  let top = 0;
+  let bottom = height - 1;
+  let left = 0;
+  let right = width - 1;
+
+  const rowHasInk = (row: number): boolean => {
+    for (let x = 0; x < width; x += 1) {
+      const index = (row * width + x) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (luma < 242) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const colHasInk = (col: number): boolean => {
+    for (let y = 0; y < height; y += 1) {
+      const index = (y * width + col) * 4;
+      const r = data[index];
+      const g = data[index + 1];
+      const b = data[index + 2];
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (luma < 242) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  while (top < bottom && !rowHasInk(top)) {
+    top += 1;
+  }
+  while (bottom > top && !rowHasInk(bottom)) {
+    bottom -= 1;
+  }
+  while (left < right && !colHasInk(left)) {
+    left += 1;
+  }
+  while (right > left && !colHasInk(right)) {
+    right -= 1;
+  }
+
+  const marginX = Math.round((right - left + 1) * 0.03);
+  const marginY = Math.round((bottom - top + 1) * 0.03);
+  const x = Math.max(0, left - marginX);
+  const y = Math.max(0, top - marginY);
+  const cropWidth = Math.min(width - x, right - left + 1 + marginX * 2);
+  const cropHeight = Math.min(height - y, bottom - top + 1 + marginY * 2);
+
+  return {
+    x,
+    y,
+    width: Math.max(1, cropWidth),
+    height: Math.max(1, cropHeight),
+  };
+}
+
+async function preprocessImageForOcr(file: File): Promise<ProcessedImageResult> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("画像ファイルを選択してください。");
+  }
+
+  const image = await loadImage(file);
+  const scaled = getScaledSize(image.naturalWidth, image.naturalHeight);
+  const baseCanvas = document.createElement("canvas");
+  baseCanvas.width = scaled.width;
+  baseCanvas.height = scaled.height;
+  const baseContext = baseCanvas.getContext("2d");
+  if (!baseContext) {
+    throw new Error("画像処理の初期化に失敗しました。");
+  }
+  baseContext.drawImage(image, 0, 0, scaled.width, scaled.height);
+
+  const originalData = baseContext.getImageData(0, 0, scaled.width, scaled.height);
+  const bounds = findContentBounds(originalData);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = bounds.width;
+  canvas.height = bounds.height;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("画像処理の初期化に失敗しました。");
+  }
+
+  context.drawImage(baseCanvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const { data } = imageData;
+
+  let luminanceSum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    luminanceSum += luma;
+  }
+  const averageLuminance = luminanceSum / (data.length / 4);
+  const threshold = Math.max(105, Math.min(210, averageLuminance - 8));
+
+  for (let i = 0; i < data.length; i += 4) {
+    const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    const contrasted = Math.max(0, Math.min(255, (luma - 128) * 1.35 + 128));
+    const value = contrasted > threshold ? 255 : 0;
+    data[i] = value;
+    data[i + 1] = value;
+    data[i + 2] = value;
+  }
+
+  context.putImageData(imageData, 0, 0);
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, "image/jpeg", 0.92);
+  });
+  if (!blob) {
+    throw new Error("画像変換に失敗しました。");
+  }
+
+  const nameWithoutExt = file.name.replace(/\.[^.]+$/, "");
+  const processedFile = new File([blob], `${nameWithoutExt}-scan.jpg`, { type: "image/jpeg" });
+
+  const warnings: string[] = [];
+  const pixelCount = image.naturalWidth * image.naturalHeight;
+  if (pixelCount < 1_200_000) {
+    warnings.push("解像度が低めです。文字が潰れる場合は近づいて再撮影してください。");
+  }
+  if (averageLuminance < 95) {
+    warnings.push("画像が暗めです。照明を強くして影を避けると精度が上がります。");
+  }
+
+  return { file: processedFile, warnings };
 }
 
 export default function OcrReviewPage() {
@@ -52,6 +229,11 @@ export default function OcrReviewPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [originalImageFile, setOriginalImageFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [qualityWarnings, setQualityWarnings] = useState<string[]>([]);
+  const [processingImage, setProcessingImage] = useState(false);
   const [draft, setDraft] = useState<OcrExtractedDraft>(INITIAL_DRAFT);
   const [rawText, setRawText] = useState("");
 
@@ -60,12 +242,6 @@ export default function OcrReviewPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraSupported, setCameraSupported] = useState(false);
-  const [cameraError, setCameraError] = useState("");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -104,13 +280,15 @@ export default function OcrReviewPage() {
   }, [router]);
 
   useEffect(() => {
-    setCameraSupported(typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia));
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, []);
+    if (!imageFile) {
+      setPreviewUrl(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(imageFile);
+    setPreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [imageFile]);
 
   const hasRequiredFields = useMemo(() => {
     return Boolean(
@@ -123,99 +301,51 @@ export default function OcrReviewPage() {
     );
   }, [draft]);
 
-  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
-    setImageFile(file);
     setError("");
     setSuccess("");
-  };
+    setQualityWarnings([]);
 
-  const startCamera = async () => {
+    if (!file) {
+      setImageFile(null);
+      setOriginalImageFile(null);
+      setSelectedFileName("");
+      return;
+    }
+
+    setOriginalImageFile(file);
+    setSelectedFileName(file.name);
+    setProcessingImage(true);
+
     try {
-      setError("");
-      setSuccess("");
-      setCameraError("");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 960 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.playsInline = true;
-        await new Promise<void>((resolve) => {
-          const onReady = () => {
-            videoRef.current?.removeEventListener("loadedmetadata", onReady);
-            resolve();
-          };
-          videoRef.current?.addEventListener("loadedmetadata", onReady);
-        });
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
+      const processed = await preprocessImageForOcr(file);
+      setImageFile(processed.file);
+      setQualityWarnings(processed.warnings);
+      setSuccess("画像を読み込み、OCR向けに補正しました。抽出を実行できます。");
     } catch {
-      setCameraError("カメラを起動できませんでした。権限を許可し、HTTPSで開いてください。");
-      setCameraActive(false);
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+      setImageFile(file);
+      setQualityWarnings([]);
+      setError("画像補正に失敗したため、元画像でOCR抽出を行います。");
+    } finally {
+      setProcessingImage(false);
     }
   };
 
-  const stopCamera = () => {
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    setCameraActive(false);
-    setCameraError("");
-  };
+  const extractFromFile = async (file: File): Promise<ExtractApiResult & { statusOk: boolean }> => {
+    const formData = new FormData();
+    formData.append("image", file);
 
-  const captureFromCamera = async () => {
-    if (!videoRef.current || !canvasRef.current) {
-      setError("カメラが初期化されていません。");
-      return;
-    }
+    const response = await fetch("/api/ocr/extract", {
+      method: "POST",
+      body: formData,
+    });
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    if (!vw || !vh) {
-      setError("フレームを取得できませんでした。");
-      return;
-    }
-
-    // 画面中央の4:3枠を切り出して周辺の写り込みを減らす
-    const targetAspect = 4 / 3;
-    let targetW = vw * 0.9;
-    let targetH = targetW / targetAspect;
-    if (targetH > vh * 0.9) {
-      targetH = vh * 0.9;
-      targetW = targetH * targetAspect;
-    }
-    const sx = (vw - targetW) / 2;
-    const sy = (vh - targetH) / 2;
-
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setError("キャンバス初期化に失敗しました。");
-      return;
-    }
-    ctx.drawImage(video, sx, sy, targetW, targetH, 0, 0, targetW, targetH);
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
-    if (!blob) {
-      setError("画像の生成に失敗しました。");
-      return;
-    }
-    const file = new File([blob], "capture.jpg", { type: "image/jpeg" });
-    setImageFile(file);
-    setError("");
-    setSuccess("フレームを取り込みました。OCR抽出を実行できます。");
+    const result = (await response.json()) as ExtractApiResult;
+    return {
+      ...result,
+      statusOk: response.ok,
+    };
   };
 
   const handleExtract = async (event: FormEvent<HTMLFormElement>) => {
@@ -230,24 +360,26 @@ export default function OcrReviewPage() {
     setSuccess("");
 
     try {
-      const formData = new FormData();
-      formData.append("image", imageFile);
+      let result = await extractFromFile(imageFile);
 
-      const response = await fetch("/api/ocr/extract", {
-        method: "POST",
-        body: formData,
-      });
+      if ((!result.statusOk || !result.ok || !result.extracted) && originalImageFile && originalImageFile !== imageFile) {
+        const fallback = await extractFromFile(originalImageFile);
+        if (fallback.statusOk && fallback.ok && fallback.extracted) {
+          result = fallback;
+          setSuccess("補正画像で抽出できなかったため、元画像で再抽出しました。内容を確認して保存してください。");
+        }
+      }
 
-      const result = (await response.json()) as ExtractApiResult;
-
-      if (!response.ok || !result.ok || !result.extracted) {
-        setError(result.error ?? "OCR抽出に失敗しました。");
+      if (!result.statusOk || !result.ok || !result.extracted) {
+        setError(result.error ?? "OCR抽出に失敗しました。画像を撮り直して再実行してください。");
         return;
       }
 
       setDraft(result.extracted);
       setRawText(result.rawText ?? "");
-      setSuccess("OCR抽出が完了しました。内容を確認して保存してください。");
+      if (!success) {
+        setSuccess("OCR抽出が完了しました。内容を確認して保存してください。");
+      }
     } catch {
       setError("OCR抽出中にエラーが発生しました。");
     } finally {
@@ -354,110 +486,67 @@ export default function OcrReviewPage() {
               required
               style={{ display: "none" }}
             />
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn secondary" type="button" onClick={() => fileInputRef.current?.click()}>
-                ファイルを選択
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                style={{ minHeight: 48, minWidth: 180 }}
+              >
+                カメラで撮影 / 画像選択
               </button>
-              {cameraSupported ? (
-                <>
-                  <button className="btn" type="button" onClick={startCamera} disabled={cameraActive}>
-                    カメラを起動
-                  </button>
-                  <button className="btn secondary" type="button" onClick={stopCamera} disabled={!cameraActive}>
-                    カメラ停止
-                  </button>
-                </>
-              ) : null}
               <span style={{ alignSelf: "center", color: "#6b7280", fontSize: 12 }}>
-                枠に合わせて撮影すると精度が上がります
+                端末標準カメラを使います（スマホ / iPad対応）
               </span>
             </div>
-            {cameraError ? (
-              <p style={{ color: "#b91c1c", margin: 0 }}>{cameraError}</p>
-            ) : null}
 
-            {cameraActive ? (
-              <div style={{ display: "grid", gap: 8 }}>
-                <div style={{ position: "relative", width: "100%", aspectRatio: "4 / 3" }}>
-                  <video
-                    ref={videoRef}
-                    playsInline
-                    muted
-                    style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8, background: "#000" }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      inset: "8%",
-                      border: "3px solid rgba(15, 23, 42, 0.6)",
-                      borderRadius: 10,
-                      pointerEvents: "none",
-                      boxShadow: "0 0 0 2000px rgba(0,0,0,0.25)",
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: 8,
-                      left: 12,
-                      right: 12,
-                      color: "#f8fafc",
-                      textShadow: "0 1px 4px rgba(0,0,0,0.8)",
-                      fontWeight: 600,
-                      fontSize: 13,
-                    }}
-                  >
-                    枠に票を水平に収めてください（4:3）
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn" type="button" onClick={captureFromCamera}>
-                    この枠で取り込む
-                  </button>
-                  <button className="btn secondary" type="button" onClick={stopCamera}>
-                    キャンセル
-                  </button>
-                </div>
-                <canvas ref={canvasRef} style={{ display: "none" }} />
-              </div>
-            ) : (
-              <div
-                style={{
-                  position: "relative",
-                  width: "100%",
-                  aspectRatio: "4 / 3",
-                  border: "2px dashed #0f172a",
-                  borderRadius: 8,
-                  background:
-                    "linear-gradient(135deg, #f8fafc 25%, #ffffff 25%, #ffffff 50%, #f8fafc 50%, #f8fafc 75%, #ffffff 75%, #ffffff 100%)",
-                  backgroundSize: "32px 32px",
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#0f172a",
-                  fontWeight: 600,
-                  textAlign: "center",
-                  padding: 12,
-                }}
-              >
-                <div>
-                  票全体がこの枠に収まるように合わせて撮影してください
-                  <div style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginTop: 4 }}>
-                    影・反射を避け、水平に。4辺が見切れないようにしてください。
-                  </div>
-                </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: "8%",
-                    border: "3px solid rgba(15, 23, 42, 0.35)",
-                    borderRadius: 6,
-                    pointerEvents: "none",
-                  }}
+            {selectedFileName ? <p style={{ margin: 0, fontSize: 13 }}>選択中: {selectedFileName}</p> : null}
+            {processingImage ? <p style={{ margin: 0, color: "#1d4ed8" }}>画像をスキャン用に最適化しています...</p> : null}
+
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                aspectRatio: "4 / 3",
+                border: "2px dashed #0f172a",
+                borderRadius: 8,
+                background:
+                  "linear-gradient(135deg, #f8fafc 25%, #ffffff 25%, #ffffff 50%, #f8fafc 50%, #f8fafc 75%, #ffffff 75%, #ffffff 100%)",
+                backgroundSize: "32px 32px",
+                display: "grid",
+                placeItems: "center",
+                color: "#0f172a",
+                fontWeight: 600,
+                textAlign: "center",
+                padding: 12,
+                overflow: "hidden",
+              }}
+            >
+              {previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt="票画像プレビュー"
+                  style={{ width: "100%", height: "100%", objectFit: "contain", background: "#fff" }}
                 />
-              </div>
-            )}
+              ) : (
+                <div>
+                  票全体がこの枠に収まるように撮影してください
+                  <div style={{ fontSize: 12, fontWeight: 400, color: "#6b7280", marginTop: 4 }}>
+                    影・反射を避け、文字がぼけないように固定して撮影してください。
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {qualityWarnings.length > 0 ? (
+              <ul style={{ margin: 0, paddingLeft: 18, color: "#92400e", fontSize: 13 }}>
+                {qualityWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : null}
           </div>
-          <button className="btn" type="submit" disabled={extracting || !imageFile}>
+          <button className="btn" type="submit" disabled={extracting || processingImage || !imageFile} style={{ minHeight: 48 }}>
             {extracting ? "OCR抽出中..." : "OCR抽出"}
           </button>
         </form>
